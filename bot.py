@@ -4,32 +4,21 @@ from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 from pymongo import MongoClient
 
-# 🔐 ENV VARIABLES
+# 🔐 ENV
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 MONGO_URI = os.getenv("MONGO_URI")
 
 print("Bot starting...")
 print("Token loaded:", BOT_TOKEN is not None)
 
-# 🧠 MongoDB (Atlas)
-import certifi
-client = MongoClient(MONGO_URI, tlsCAFile=certifi.where())
+# 🧠 Mongo
+client = MongoClient(MONGO_URI)
 db = client["metro"]
 collection = db["users"]
 
-# Temporary memory
 users = {}
 
-# Group links (edit as needed)
-group_links = {
-    ("vaishali", "rajiv chowk", "morning"): "https://t.me/link1",
-    ("sector 52", "noida city center", "morning"): "https://t.me/link2",
-    ("rajiv chowk", "vaishali", "morning"): "https://t.me/link3",
-}
-
 # ⏰ Normalize time
-
-
 def normalize_time(time_str):
     time_str = time_str.lower().replace(" ", "")
     match = re.match(r"(\d{1,2})(:(\d{1,2}))?(am|pm)", time_str)
@@ -43,44 +32,7 @@ def normalize_time(time_str):
 
     return f"{hour:02d}:{minute:02d} {period}"
 
-# ⏰ Time bucket
-
-
-def get_time_bucket(time_str):
-    try:
-        hour = int(time_str.split(":")[0])
-    except:
-        return "morning"
-
-    if 6 <= hour < 12:
-        return "morning"
-    elif 12 <= hour < 18:
-        return "afternoon"
-    else:
-        return "evening"
-
-# 🔍 Related routes
-
-
-def find_related_groups(source, destination, bucket):
-    results = []
-
-    for (src, dest, bkt), link in group_links.items():
-        if bkt != bucket:
-            continue
-
-        if src == source and dest != destination:
-            results.append(f"From {src} → {dest}\n{link}")
-        elif dest == destination and src != source:
-            results.append(f"From {src} → {dest}\n{link}")
-        elif src == destination and dest == source:
-            results.append(f"Reverse: {src} → {dest}\n{link}")
-
-    return results[:3]
-
-# 🚀 Start
-
-
+# 🚀 START
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.chat_id
     users[user_id] = {"referral_by": None}
@@ -92,9 +44,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     )
 
-# 🧩 Handle messages
-
-
+# 🧩 HANDLER
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.chat_id
     text = update.message.text.strip().lower()
@@ -103,7 +53,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Type /start to begin")
         return
 
-    # Referral step
+    # Referral
     if "referral_done" not in users[user_id]:
         users[user_id]["referral_done"] = True
 
@@ -125,13 +75,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Source
     if "source" not in users[user_id]:
-        users[user_id]["source"] = text
+        users[user_id]["source"] = text.lower()
         await update.message.reply_text("Enter your destination station:")
+        return
 
     # Destination
     elif "destination" not in users[user_id]:
-        users[user_id]["destination"] = text
+        users[user_id]["destination"] = text.lower()
         await update.message.reply_text("Enter your travel time (e.g. 9am):")
+        return
 
     # Time
     elif "time" not in users[user_id]:
@@ -144,6 +96,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Time set as {normalized}\nDo you travel daily?",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
         )
+        return
 
     # Final step
     elif "recurring" not in users[user_id]:
@@ -155,83 +108,45 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=ReplyKeyboardRemove()
         )
 
-        collection.delete_many({"user_id": user_id})
-        collection.insert_one(users[user_id])
+        print("Saving user:", users[user_id])
+
+        # Save
+        try:
+            collection.delete_many({"user_id": user_id})
+            collection.insert_one(users[user_id])
+        except Exception as e:
+            print("Mongo Save Error:", e)
 
         await update.message.reply_text("✅ Registered successfully!")
 
-        matches = list(collection.find({
-            "source": users[user_id]["source"],
-            "destination": users[user_id]["destination"]
-        }))
+        # Match
+        try:
+            matches = list(collection.find({
+                "source": users[user_id]["source"],
+                "destination": users[user_id]["destination"]
+            }))
+        except Exception as e:
+            print("Mongo Error:", e)
+            matches = []
 
         valid_matches = [m for m in matches if m["user_id"] != user_id]
-        match_count = len(valid_matches)
+        count = len(valid_matches)
 
-        bucket = get_time_bucket(users[user_id]["time"])
+        print("Matches found:", count)
 
-        key = (
-            users[user_id]["source"],
-            users[user_id]["destination"],
-            bucket
-        )
-
-        if match_count > 0:
-            await update.message.reply_text(f"🎉 Found {match_count} people!")
-
-            if key in group_links:
-                await update.message.reply_text(
-                    f"🚇 Join your travel group:\n{group_links[key]}"
-                )
-            else:
-                await update.message.reply_text("Group coming soon.")
+        if count > 0:
+            await update.message.reply_text(f"🎉 Found {count} people travelling with you!")
         else:
-            await update.message.reply_text("No exact match found.")
+            await update.message.reply_text("No match found yet. We’ll notify you.")
 
-            related = find_related_groups(
-                users[user_id]["source"],
-                users[user_id]["destination"],
-                bucket
-            )
+        # FINAL SAFETY RESPONSE
+        await update.message.reply_text("✅ Done. You are registered.")
 
-            if related:
-                msg = "👉 Similar routes:\n\n" + "\n\n".join(related)
-                await update.message.reply_text(msg)
-            else:
-                await update.message.reply_text(
-                    "We’ll notify you once more people join."
-                )
-
-        user_data = collection.find_one({"user_id": user_id})
-
-        if user_data and user_data.get("referral_count", 0) >= 3:
-            await update.message.reply_text("🏆 You are now a VIP user!")
-
-# 🚀 App
+# 🚀 RUN
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(
-    filters.TEXT & ~filters.COMMAND, handle_message))
-
-# --- DUMMY WEB SERVER FOR RENDER ---
-import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
-
-class DummyHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is running")
-
-def run_dummy_server():
-    port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(("0.0.0.0", port), DummyHandler)
-    print(f"Dummy web server running on port {port}...")
-    server.serve_forever()
-
-threading.Thread(target=run_dummy_server, daemon=True).start()
-# -----------------------------------
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 print("🚀 Bot running...")
 app.run_polling()
