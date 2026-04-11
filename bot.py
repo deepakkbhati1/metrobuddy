@@ -1,29 +1,32 @@
 import re
 import os
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 from pymongo import MongoClient
 
-# ENV
+# 🔐 ENV VARIABLES
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 MONGO_URI = os.getenv("MONGO_URI")
 
 print("Bot starting...")
 print("Token loaded:", BOT_TOKEN is not None)
 
-# DB
+# 🧠 MongoDB
 client = MongoClient(MONGO_URI)
 db = client["metro"]
 collection = db["users"]
 
+# Temporary storage
 users = {}
 
+# Sample group links
 group_links = {
     ("vaishali", "rajiv chowk", "morning"): "https://t.me/link1",
     ("sector 52", "noida city center", "morning"): "https://t.me/link2",
     ("rajiv chowk", "vaishali", "morning"): "https://t.me/link3",
 }
 
+# ⏰ Normalize time
 def normalize_time(time_str):
     time_str = time_str.lower().replace(" ", "")
     match = re.match(r"(\d{1,2})(:(\d{1,2}))?(am|pm)", time_str)
@@ -37,6 +40,7 @@ def normalize_time(time_str):
 
     return f"{hour:02d}:{minute:02d} {period}"
 
+# ⏰ Time bucket
 def get_time_bucket(time_str):
     try:
         hour = int(time_str.split(":")[0])
@@ -50,6 +54,7 @@ def get_time_bucket(time_str):
     else:
         return "evening"
 
+# 🔍 Related routes
 def find_related_groups(source, destination, bucket):
     results = []
 
@@ -66,25 +71,28 @@ def find_related_groups(source, destination, bucket):
 
     return results[:3]
 
-def start(update: Update, context: CallbackContext):
+# 🚀 Start command
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.chat_id
     users[user_id] = {"referral_by": None}
 
     keyboard = [["Skip"]]
 
-    update.message.reply_text(
+    await update.message.reply_text(
         f"Welcome 🚇\n\nYour referral code: {user_id}\n\nEnter referral code or skip:",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     )
 
-def handle_message(update: Update, context: CallbackContext):
+# 🧩 Message handler
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.chat_id
     text = update.message.text.strip().lower()
 
     if user_id not in users:
-        update.message.reply_text("Type /start to begin")
+        await update.message.reply_text("Type /start to begin")
         return
 
+    # Referral step
     if "referral_done" not in users[user_id]:
         users[user_id]["referral_done"] = True
 
@@ -101,39 +109,48 @@ def handle_message(update: Update, context: CallbackContext):
             except:
                 pass
 
-        update.message.reply_text("Enter your source metro station:")
+        await update.message.reply_text("Enter your source metro station:")
         return
 
+    # Source
     if "source" not in users[user_id]:
         users[user_id]["source"] = text
-        update.message.reply_text("Enter your destination station:")
+        await update.message.reply_text("Enter your destination station:")
 
+    # Destination
     elif "destination" not in users[user_id]:
         users[user_id]["destination"] = text
-        update.message.reply_text("Enter your travel time (e.g. 9am):")
+        await update.message.reply_text("Enter your travel time (e.g. 9am):")
 
+    # Time
     elif "time" not in users[user_id]:
         normalized = normalize_time(text)
         users[user_id]["time"] = normalized
 
         keyboard = [["Yes", "No"]]
 
-        update.message.reply_text(
+        await update.message.reply_text(
             f"Time set as {normalized}\nDo you travel daily?",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
         )
 
+    # Final step
     elif "recurring" not in users[user_id]:
         users[user_id]["recurring"] = text
         users[user_id]["user_id"] = user_id
 
-        update.message.reply_text("Processing...", reply_markup=ReplyKeyboardRemove())
+        await update.message.reply_text(
+            "Processing...",
+            reply_markup=ReplyKeyboardRemove()
+        )
 
+        # Save data
         collection.delete_many({"user_id": user_id})
         collection.insert_one(users[user_id])
 
-        update.message.reply_text("✅ Registered successfully!")
+        await update.message.reply_text("✅ Registered successfully!")
 
+        # Matching logic
         matches = list(collection.find({
             "source": users[user_id]["source"],
             "destination": users[user_id]["destination"]
@@ -151,12 +168,16 @@ def handle_message(update: Update, context: CallbackContext):
         )
 
         if match_count > 0:
-            update.message.reply_text(f"🎉 Found {match_count} people!")
+            await update.message.reply_text(f"🎉 Found {match_count} people!")
 
             if key in group_links:
-                update.message.reply_text(f"🚇 Join group:\n{group_links[key]}")
+                await update.message.reply_text(
+                    f"🚇 Join your travel group:\n{group_links[key]}"
+                )
+            else:
+                await update.message.reply_text("Group coming soon.")
         else:
-            update.message.reply_text("No exact match found.")
+            await update.message.reply_text("No exact match found.")
 
             related = find_related_groups(
                 users[user_id]["source"],
@@ -166,22 +187,23 @@ def handle_message(update: Update, context: CallbackContext):
 
             if related:
                 msg = "👉 Similar routes:\n\n" + "\n\n".join(related)
-                update.message.reply_text(msg)
+                await update.message.reply_text(msg)
             else:
-                update.message.reply_text("We’ll notify you.")
+                await update.message.reply_text(
+                    "We’ll notify you once more people join."
+                )
 
+        # Referral reward
         user_data = collection.find_one({"user_id": user_id})
 
         if user_data and user_data.get("referral_count", 0) >= 3:
-            update.message.reply_text("🏆 VIP unlocked!")
+            await update.message.reply_text("🏆 You are now a VIP user!")
 
-# RUN
-updater = Updater(BOT_TOKEN, use_context=True)
-dp = updater.dispatcher
+# 🚀 App start
+app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-dp.add_handler(CommandHandler("start", start))
-dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+app.add_handler(CommandHandler("start", start))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 print("🚀 Bot running...")
-updater.start_polling()
-updater.idle()
+app.run_polling()
