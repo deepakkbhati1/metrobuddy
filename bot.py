@@ -11,7 +11,7 @@ MONGO_URI = os.getenv("MONGO_URI")
 print("Bot starting...")
 print("Token loaded:", BOT_TOKEN is not None)
 
-# 🧠 MongoDB
+# 🧠 MongoDB (Atlas)
 client = MongoClient(MONGO_URI)
 db = client["metro"]
 collection = db["users"]
@@ -19,7 +19,7 @@ collection = db["users"]
 # Temporary memory
 users = {}
 
-# Sample group links
+# Group links (edit as needed)
 group_links = {
     ("vaishali", "rajiv chowk", "morning"): "https://t.me/link1",
     ("sector 52", "noida city center", "morning"): "https://t.me/link2",
@@ -27,6 +27,8 @@ group_links = {
 }
 
 # ⏰ Normalize time
+
+
 def normalize_time(time_str):
     time_str = time_str.lower().replace(" ", "")
     match = re.match(r"(\d{1,2})(:(\d{1,2}))?(am|pm)", time_str)
@@ -41,6 +43,8 @@ def normalize_time(time_str):
     return f"{hour:02d}:{minute:02d} {period}"
 
 # ⏰ Time bucket
+
+
 def get_time_bucket(time_str):
     try:
         hour = int(time_str.split(":")[0])
@@ -55,6 +59,8 @@ def get_time_bucket(time_str):
         return "evening"
 
 # 🔍 Related routes
+
+
 def find_related_groups(source, destination, bucket):
     results = []
 
@@ -71,7 +77,9 @@ def find_related_groups(source, destination, bucket):
 
     return results[:3]
 
-# 🚀 START
+# 🚀 Start
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.chat_id
     users[user_id] = {"referral_by": None}
@@ -83,7 +91,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     )
 
-# 🧩 MESSAGE HANDLER
+# 🧩 Handle messages
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.chat_id
     text = update.message.text.strip().lower()
@@ -144,13 +154,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=ReplyKeyboardRemove()
         )
 
-        # Save
         collection.delete_many({"user_id": user_id})
         collection.insert_one(users[user_id])
 
         await update.message.reply_text("✅ Registered successfully!")
 
-        # Matching
         matches = list(collection.find({
             "source": users[user_id]["source"],
             "destination": users[user_id]["destination"]
@@ -189,19 +197,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 msg = "👉 Similar routes:\n\n" + "\n\n".join(related)
                 await update.message.reply_text(msg)
             else:
-                await update.message.reply_text("We’ll notify you.")
+                await update.message.reply_text(
+                    "We’ll notify you once more people join."
+                )
 
-        # Referral reward
         user_data = collection.find_one({"user_id": user_id})
 
         if user_data and user_data.get("referral_count", 0) >= 3:
-            await update.message.reply_text("🏆 VIP unlocked!")
+            await update.message.reply_text("🏆 You are now a VIP user!")
 
-# 🚀 APP START
+# 🚀 App
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+app.add_handler(MessageHandler(
+    filters.TEXT & ~filters.COMMAND, handle_message))
 
 print("🚀 Bot running...")
 app.run_polling()
