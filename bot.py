@@ -16,7 +16,7 @@ client = MongoClient(MONGO_URI)
 db = client["metro"]
 collection = db["users"]
 
-# Temporary storage
+# Temporary memory
 users = {}
 
 # Sample group links
@@ -71,7 +71,7 @@ def find_related_groups(source, destination, bucket):
 
     return results[:3]
 
-# 🚀 Start command
+# 🚀 START
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.chat_id
     users[user_id] = {"referral_by": None}
@@ -83,7 +83,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     )
 
-# 🧩 Message handler
+# 🧩 MESSAGE HANDLER
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.chat_id
     text = update.message.text.strip().lower()
@@ -144,13 +144,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=ReplyKeyboardRemove()
         )
 
-        # Save data
+        # Save
         collection.delete_many({"user_id": user_id})
         collection.insert_one(users[user_id])
 
         await update.message.reply_text("✅ Registered successfully!")
 
-        # Matching logic
+        # Matching
         matches = list(collection.find({
             "source": users[user_id]["source"],
             "destination": users[user_id]["destination"]
@@ -189,17 +189,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 msg = "👉 Similar routes:\n\n" + "\n\n".join(related)
                 await update.message.reply_text(msg)
             else:
-                await update.message.reply_text(
-                    "We’ll notify you once more people join."
-                )
+                await update.message.reply_text("We’ll notify you.")
 
         # Referral reward
         user_data = collection.find_one({"user_id": user_id})
 
         if user_data and user_data.get("referral_count", 0) >= 3:
-            await update.message.reply_text("🏆 You are now a VIP user!")
+            await update.message.reply_text("🏆 VIP unlocked!")
 
-# 🚀 App start
+# 🚀 APP START
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
